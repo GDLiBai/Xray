@@ -1,8 +1,5 @@
 #!/bin/bash
 
-author=233boy
-# github=https://github.com/233boy/xray
-
 # bash fonts colors
 red='\e[31m'
 yellow='\e[33m'
@@ -12,52 +9,52 @@ blue='\e[94m'
 magenta='\e[95m'
 cyan='\e[96m'
 none='\e[0m'
-_red() { echo -e ${red}$@${none}; }
-_blue() { echo -e ${blue}$@${none}; }
-_cyan() { echo -e ${cyan}$@${none}; }
-_green() { echo -e ${green}$@${none}; }
-_yellow() { echo -e ${yellow}$@${none}; }
-_magenta() { echo -e ${magenta}$@${none}; }
-_red_bg() { echo -e "\e[41m$@${none}"; }
+_red() { echo -e "${red}$*${none}"; }
+_blue() { echo -e "${blue}$*${none}"; }
+_cyan() { echo -e "${cyan}$*${none}"; }
+_green() { echo -e "${green}$*${none}"; }
+_yellow() { echo -e "${yellow}$*${none}"; }
+_magenta() { echo -e "${magenta}$*${none}"; }
+_red_bg() { echo -e "\e[41m$*${none}"; }
 
 is_err=$(_red_bg 错误!)
 is_warn=$(_red_bg 警告!)
 
 err() {
-    echo -e "\n$is_err $@\n" && exit 1
+    echo -e "\n${is_err} $*\n" && exit 1
 }
 
 warn() {
-    echo -e "\n$is_warn $@\n"
+    echo -e "\n${is_warn} $*\n"
 }
 
-# root
+# require root
 [[ $EUID != 0 ]] && err "当前非 ${yellow}ROOT用户.${none}"
 
-# yum or apt-get or apk, ubuntu/debian/centos/alpine
+# detect package manager (apt-get, yum, apk)
 cmd=$(type -P apt-get || type -P yum || type -P apk)
 [[ ! $cmd ]] && err "此脚本仅支持 ${yellow}(Ubuntu or Debian or CentOS or Alpine)${none}."
 
-# alpine linux
+# alpine detection
 is_alpine=
 [[ $cmd =~ apk ]] && is_alpine=1
 
-# systemd or openrc
+# systemd or openrc checks
 if [[ $is_alpine ]]; then
     [[ ! $(type -P rc-service) ]] && {
         err "此系统缺少 ${yellow}(rc-service)${none}, 请尝试执行:${yellow} ${cmd} add openrc ${none}来修复此错误."
     }
 else
     [[ ! $(type -P systemctl) ]] && {
-        err "此系统缺少 ${yellow}(systemctl)${none}, 请尝试执行:${yellow} ${cmd} update -y;${cmd} install systemd -y ${none}来修复此错误."
+        err "此系统缺少 ${yellow}(systemctl)${none}, 请尝试执行:${yellow} ${cmd} update -y; ${cmd} install systemd -y ${none}来修复此错误."
     }
 fi
 
 # wget installed or none
 is_wget=$(type -P wget)
 
-# x64
-case $(uname -m) in
+# arch detection (x64 / arm64)
+case "$(uname -m)" in
 amd64 | x86_64)
     is_jq_arch=amd64
     is_core_arch="64"
@@ -80,7 +77,8 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/$is_core
+# 脚本仓库指向本仓库下同名项目（作者标识已删除）
+is_sh_repo=GDLiBai/$is_core
 is_pkg="wget unzip"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
@@ -93,43 +91,46 @@ tmp_var_lists=(
     is_pkg_ok
 )
 
-# tmp dir
-tmpdir=$(mktemp -u)
-[[ ! $tmpdir ]] && {
+# tmp dir - 使用安全的 mktemp -d，并保证清理
+tmpdir=$(mktemp -d 2>/dev/null)
+if [[ -z "$tmpdir" || ! -d "$tmpdir" ]]; then
     tmpdir=/tmp/tmp-$RANDOM
+    mkdir -p "$tmpdir"
+fi
+
+cleanup_tmpdir() {
+    [[ -n "$tmpdir" && -d "$tmpdir" ]] && rm -rf "$tmpdir"
 }
+trap cleanup_tmpdir EXIT
 
 # set up var
-for i in ${tmp_var_lists[*]}; do
-    export $i=$tmpdir/$i
+for i in "${tmp_var_lists[@]}"; do
+    export "$i"="$tmpdir/$i"
 done
 
 # load bash script.
 load() {
-    . $is_sh_dir/src/$1
+    # quote param
+    . "$is_sh_dir/src/$1"
 }
 
-# wget add --no-check-certificate
+# wget wrapper with optional proxy support
 _wget() {
     [[ $proxy ]] && export https_proxy=$proxy
-    wget --no-check-certificate $*
+    wget --no-check-certificate "$@"
 }
 
-# print a mesage
+# print a message with timestamp
 msg() {
     case $1 in
-    warn)
-        local color=$yellow
-        ;;
-    err)
-        local color=$red
-        ;;
-    ok)
-        local color=$green
-        ;;
+    warn) local color=$yellow ;;
+    err)  local color=$red ;;
+    ok)   local color=$green ;;
+    *)    local color=$none ;;
     esac
 
-    echo -e "${color}$(date +'%T')${none}) ${2}"
+    shift
+    echo -e "${color}$(date +'%T')${none}) $*"
 }
 
 # show help msg
@@ -140,18 +141,17 @@ show_help() {
     echo -e "  -p, --proxy <addr>              使用代理下载, e.g., -p http://127.0.0.1:2333"
     echo -e "  -v, --core-version <ver>        自定义 $is_core_name 版本, e.g., -v v1.8.1"
     echo -e "  -h, --help                      显示此帮助界面\n"
-
     exit 0
 }
 
 # install dependent pkg
 install_pkg() {
     cmd_not_found=
-    for i in $*; do
-        [[ ! $(type -P $i) ]] && cmd_not_found="$cmd_not_found,$i"
+    for i in "$@"; do
+        [[ ! $(type -P "$i") ]] && cmd_not_found="$cmd_not_found,$i"
     done
     if [[ $cmd_not_found ]]; then
-        pkg=$(echo $cmd_not_found | sed 's/,/ /g')
+        pkg=$(echo "$cmd_not_found" | sed 's/,/ /g')
         msg warn "安装依赖包 >${pkg}"
         if [[ $is_alpine ]]; then
             $cmd add $pkg &>/dev/null
@@ -167,12 +167,12 @@ install_pkg() {
                 $cmd update -y &>/dev/null
                 $cmd install -y $pkg &>/dev/null
             fi
-            [[ $? == 0 ]] && >$is_pkg_ok
+            [[ $? == 0 ]] && : >"$is_pkg_ok"
         else
-            >$is_pkg_ok
+            : >"$is_pkg_ok"
         fi
     else
-        >$is_pkg_ok
+        : >"$is_pkg_ok"
     fi
 }
 
@@ -180,36 +180,39 @@ install_pkg() {
 download() {
     case $1 in
     core)
-        link=https://github.com/${is_core_repo}/releases/latest/download/${is_core}-linux-${is_core_arch}.zip
+        link="https://github.com/${is_core_repo}/releases/latest/download/${is_core}-linux-${is_core_arch}.zip"
         [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-linux-${is_core_arch}.zip"
         name=$is_core_name
         tmpfile=$tmpcore
         is_ok=$is_core_ok
         ;;
     sh)
-        link=https://github.com/${is_sh_repo}/releases/latest/download/code.zip
-        name="$is_core_name 脚本"
+        link="https://github.com/${is_sh_repo}/releases/latest/download/code.zip"
+        name="${is_core_name} 脚本"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
         ;;
     jq)
-        link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_jq_arch
+        link="https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_jq_arch"
         name="jq"
         tmpfile=$tmpjq
         is_ok=$is_jq_ok
         ;;
+    *)
+        return 1
+        ;;
     esac
 
     msg warn "下载 ${name} > ${link}"
-    if _wget -t 3 -q -c $link -O $tmpfile; then
-        mv -f $tmpfile $is_ok
+    if _wget -t 3 -q -c "$link" -O "$tmpfile"; then
+        mv -f "$tmpfile" "$is_ok"
     fi
 }
 
 # get server ip
 get_ip() {
-    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null || true
+    [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null || true
 }
 
 # check background tasks status
@@ -247,7 +250,7 @@ check_status() {
         }
     fi
 
-    # found fail status, remove tmp dir and exit.
+    # found fail status, exit.
     [[ $is_fail ]] && {
         exit_and_del_tmpdir
     }
@@ -303,7 +306,7 @@ pass_args() {
 
 # exit and remove tmpdir
 exit_and_del_tmpdir() {
-    rm -rf $tmpdir
+    cleanup_tmpdir
     [[ ! $1 ]] && {
         msg err "哦豁.."
         msg err "安装过程出现错误..."
@@ -323,31 +326,34 @@ main() {
     }
 
     # check parameters
-    [[ $# -gt 0 ]] && pass_args $@
+    [[ $# -gt 0 ]] && pass_args "$@"
 
     # show welcome msg
     clear
     echo
-    echo "........... $is_core_name script by $author .........."
+    echo "........... $is_core_name script .........."
     echo
 
     # start installing...
     msg warn "开始安装..."
     [[ $is_core_ver ]] && msg warn "${is_core_name} 版本: ${yellow}$is_core_ver${none}"
     [[ $proxy ]] && msg warn "使用代理: ${yellow}$proxy${none}"
-    # create tmpdir
-    mkdir -p $tmpdir
+
+    # create tmpdir (already created above), ensure perms
+    mkdir -p "$tmpdir"
+
     # if is_core_file, copy file
     [[ $is_core_file ]] && {
-        cp -f $is_core_file $is_core_ok
+        cp -f "$is_core_file" "$is_core_ok"
         msg warn "${yellow}${is_core_name} 文件使用 > $is_core_file${none}"
     }
     # local dir install sh script
     [[ $local_install ]] && {
-        >$is_sh_ok
+        : >"$is_sh_ok"
         msg warn "${yellow}本地获取安装脚本 > $PWD ${none}"
     }
 
+    # enable ntp sync if available
     timedatectl set-ntp true &>/dev/null
     [[ $? != 0 ]] && {
         [[ $is_alpine ]] || msg warn "${yellow}\e[4m提醒!!! 无法设置自动同步时间, 可能会影响使用 VMess 协议.${none}"
@@ -358,12 +364,12 @@ main() {
             msg warn "${yellow}\e[4m提醒!!! 无法设置自动同步时间, 可能会影响使用 VMess 协议.${none}"
     }
 
-    # install dependent pkg
+    # install dependent pkg in background
     install_pkg $is_pkg &
 
     # jq
     if [[ $(type -P jq) ]]; then
-        >$is_jq_ok
+        : >"$is_jq_ok"
     else
         jq_not_found=1
     fi
@@ -383,13 +389,13 @@ main() {
 
     # test $is_core_file
     if [[ $is_core_file ]]; then
-        unzip -qo $is_core_ok -d $tmpdir/testzip &>/dev/null
+        unzip -qo "$is_core_ok" -d "$tmpdir/testzip" &>/dev/null
         [[ $? != 0 ]] && {
             msg err "${is_core_name} 文件无法通过测试."
             exit_and_del_tmpdir
         }
         for i in ${is_core} geoip.dat geosite.dat; do
-            [[ ! -f $tmpdir/testzip/$i ]] && is_file_err=1 && break
+            [[ ! -f "$tmpdir/testzip/$i" ]] && is_file_err=1 && break
         done
         [[ $is_file_err ]] && {
             msg err "${is_core_name} 文件无法通过测试."
@@ -398,44 +404,44 @@ main() {
     fi
 
     # get server ip.
-    [[ ! $ip ]] && {
+    [[ -z $ip ]] && {
         msg err "获取服务器 IP 失败."
         exit_and_del_tmpdir
     }
 
     # create sh dir...
-    mkdir -p $is_sh_dir
+    mkdir -p "$is_sh_dir"
 
     # copy sh file or unzip sh zip file.
     if [[ $local_install ]]; then
-        cp -rf $PWD/* $is_sh_dir
+        cp -rf "$PWD"/* "$is_sh_dir"
     else
-        unzip -qo $is_sh_ok -d $is_sh_dir
+        unzip -qo "$is_sh_ok" -d "$is_sh_dir"
     fi
 
     # create core bin dir
-    mkdir -p $is_core_dir/bin
+    mkdir -p "$is_core_dir/bin"
     # copy core file or unzip core zip file
     if [[ $is_core_file ]]; then
-        cp -rf $tmpdir/testzip/* $is_core_dir/bin
+        cp -rf "$tmpdir/testzip"/* "$is_core_dir/bin"
     else
-        unzip -qo $is_core_ok -d $is_core_dir/bin
+        unzip -qo "$is_core_ok" -d "$is_core_dir/bin"
     fi
 
     # add alias
-    echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
+    echo "alias $is_core=$is_sh_bin" >> /root/.bashrc
 
     # core command
-    ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
+    ln -sf "$is_sh_dir/$is_core.sh" "$is_sh_bin"
 
     # jq
-    [[ $jq_not_found ]] && mv -f $is_jq_ok /usr/bin/jq
+    [[ $jq_not_found ]] && mv -f "$is_jq_ok" /usr/bin/jq
 
     # chmod
-    chmod +x $is_core_bin $is_sh_bin /usr/bin/jq
+    chmod +x "$is_core_bin" "$is_sh_bin" /usr/bin/jq 2>/dev/null || true
 
     # create log dir
-    mkdir -p $is_log_dir
+    mkdir -p "$is_log_dir"
 
     # show a tips msg
     msg ok "生成配置文件..."
@@ -443,17 +449,17 @@ main() {
     # create systemd service
     load systemd.sh
     is_new_install=1
-    install_service $is_core &>/dev/null
+    install_service "$is_core" &>/dev/null
 
-    # create condf dir
-    mkdir -p $is_conf_dir
+    # create conf dir
+    mkdir -p "$is_conf_dir"
 
     load core.sh
-    # create a tcp config
+    # create a tcp config (默认 add reality)
     add reality
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok
 }
 
 # start.
-main $@
+main "$@"
